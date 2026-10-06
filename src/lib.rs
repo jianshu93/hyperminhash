@@ -1190,7 +1190,7 @@ impl Sketch {
     /// writer.flush()?;
     /// # Ok::<(), std::io::Error>(())
     /// ```
-    pub fn save<W: io::Write>(&self, mut writer: W) -> io::Result<()> {
+    pub fn save(&self, mut writer: impl std::io::Write) -> std::io::Result<()> {
         for r in self.regs.iter() {
             writer.write_all(&r.to_le_bytes())?;
         }
@@ -1218,7 +1218,7 @@ impl Sketch {
     /// # assert!(!sketch.is_empty());
     /// # Ok::<(), std::io::Error>(())
     /// ```
-    pub fn load<R: io::Read>(mut reader: R) -> io::Result<Self> {
+    pub fn load(mut reader: impl std::io::Read) -> std::io::Result<Self> {
         let mut regs = zeroed_registers();
         let mut buf = [0u8; 2];
         for r in regs.iter_mut() {
