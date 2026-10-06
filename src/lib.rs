@@ -4,7 +4,7 @@
 //! As with other cardinality estimators, `Hyperminhash` has two advantages when counting very large
 //! sets or streams of elements:
 //! * It uses a single data structure that never grows while counting elements. The structure
-//!   consumes 32kb of memory, allocated on the stack.
+//!   uses a fixed 32 KiB register buffer allocated on the heap.
 //! * The amount of work done for counting a marginal element stays approximately constant.
 //!
 //! For sets smaller than roughly 10^3 unique elements, a `std::collections::HashSet` is usually faster.
@@ -18,7 +18,7 @@
 //! // A `Sketch` can approximate the unique count of elements it has seen over it's lifetime.
 //! let mut sk = Sketch::default();
 //!
-//! // After initialization, a `Sketch` will never allocate.
+//! // Adding elements to an initialized `Sketch` does not allocate register storage.
 //!
 //! // Elements added to Sketch need to implement `std::hash::Hash`
 //! sk.add("foobar");
@@ -87,7 +87,17 @@ const TQ: u32 = 1 << Q;
 const TR: u32 = 1 << R;
 const C: f64 = 0.169_919_487_159_739_1;
 
-type Regs = [u16; M as usize];
+type Regs = Box<[u16; M as usize]>;
+
+fn zeroed_registers() -> Regs {
+    // Allocate directly on the heap: Box::new([0; M]) can first create a
+    // full register array on the stack, depending on compiler optimization.
+    vec![0; M as usize]
+        .into_boxed_slice()
+        .try_into()
+        .unwrap_or_else(|_| unreachable!("sketch has a fixed register count"))
+}
+
 const _: () = assert!(M <= u16::MAX as u32);
 const IS_EMPTY_CHUNK_REGISTERS: usize = 64;
 const _: () = assert!((M as usize).is_multiple_of(IS_EMPTY_CHUNK_REGISTERS));
@@ -353,7 +363,7 @@ impl std::fmt::Debug for Sketch {
 impl Default for Sketch {
     fn default() -> Self {
         Self {
-            regs: [0; M as usize],
+            regs: zeroed_registers(),
         }
     }
 }
@@ -1174,7 +1184,7 @@ impl Sketch {
     /// # Ok::<(), std::io::Error>(())
     /// ```
     pub fn save(&self, mut writer: impl std::io::Write) -> std::io::Result<()> {
-        for r in self.regs {
+        for r in self.regs.iter() {
             writer.write_all(&r.to_le_bytes())?;
         }
         Ok(())
@@ -1202,9 +1212,9 @@ impl Sketch {
     /// # Ok::<(), std::io::Error>(())
     /// ```
     pub fn load(mut reader: impl std::io::Read) -> std::io::Result<Self> {
-        let mut regs = [0; M as usize];
+        let mut regs = zeroed_registers();
         let mut buf = [0u8; 2];
-        for r in &mut regs {
+        for r in regs.iter_mut() {
             reader.read_exact(&mut buf)?;
             *r = u16::from_le_bytes(buf);
         }
@@ -1419,9 +1429,8 @@ mod tests {
 
     #[test]
     fn overlap_counts_fit_in_u16_at_the_register_limit() {
-        let left = Sketch {
-            regs: [1; M as usize],
-        };
+        let mut left = Sketch::new();
+        left.regs.fill(1);
         let mut right = left.clone();
         right.regs[0] = 2;
 
@@ -1683,14 +1692,9 @@ mod tests {
         check_both((0..100).collect(), (50..150).collect());
         check_both((0..1_000).collect(), (10_000..11_000).collect());
         check_both((0..10_000).collect(), (5_000..15_000).collect());
-        check_both(
-            Sketch {
-                regs: [0; M as usize],
-            },
-            Sketch {
-                regs: [u16::MAX; M as usize],
-            },
-        );
+        let mut filled = Sketch::new();
+        filled.regs.fill(u16::MAX);
+        check_both(Sketch::new(), filled);
         check_both((0..1_000_000).collect(), (500_000..1_500_000).collect());
     }
 }
