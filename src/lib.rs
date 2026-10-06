@@ -74,6 +74,9 @@
 
 use std::{hash, io};
 
+#[cfg(feature = "serialize")]
+mod serde_support;
+
 const EMPTY_HASH: u128 = 0x99aa06d3014798d86001c324468d497f;
 
 const P: u32 = 14;
@@ -102,7 +105,7 @@ const _: () = assert!(M <= u16::MAX as u32);
 const IS_EMPTY_CHUNK_REGISTERS: usize = 64;
 const _: () = assert!((M as usize).is_multiple_of(IS_EMPTY_CHUNK_REGISTERS));
 
-/// The exact size, in bytes, of a serialized [`Sketch`].
+/// The exact size, in bytes, of a [`Sketch`] serialized with [`Sketch::save`].
 ///
 /// This is also a useful advisory capacity when constructing a
 /// [`std::io::BufReader`] or [`std::io::BufWriter`] for sketch I/O. Buffering
@@ -347,6 +350,10 @@ impl std::fmt::Debug for Entry {
 }
 
 /// Records the approximate number of unique elements it has seen over it's lifetime.
+///
+/// With the `serialize` feature, implements Serde serialization and deserialization
+/// as a fixed-length tuple of 16,384 `u16` registers. Deserialization allocates
+/// the register buffer directly on the heap and validates the register count.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Sketch {
     regs: Regs,
@@ -1183,7 +1190,7 @@ impl Sketch {
     /// writer.flush()?;
     /// # Ok::<(), std::io::Error>(())
     /// ```
-    pub fn save(&self, mut writer: impl std::io::Write) -> std::io::Result<()> {
+    pub fn save<W: io::Write>(&self, mut writer: W) -> io::Result<()> {
         for r in self.regs.iter() {
             writer.write_all(&r.to_le_bytes())?;
         }
@@ -1211,7 +1218,7 @@ impl Sketch {
     /// # assert!(!sketch.is_empty());
     /// # Ok::<(), std::io::Error>(())
     /// ```
-    pub fn load(mut reader: impl std::io::Read) -> std::io::Result<Self> {
+    pub fn load<R: io::Read>(mut reader: R) -> io::Result<Self> {
         let mut regs = zeroed_registers();
         let mut buf = [0u8; 2];
         for r in regs.iter_mut() {
